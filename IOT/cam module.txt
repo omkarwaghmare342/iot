@@ -1,0 +1,117 @@
+// Include necessary libraries for ESP32 camera and WiFi #include "esp_camera.h"
+#include <WiFi.h>
+
+
+// Select camera model by uncommenting the appropriate line
+// #define CAMERA_MODEL_WROVER_KIT
+// #define CAMERA_MODEL_ESP_EYE
+// #define CAMERA_MODEL_M5STACK_PSRAM
+// #define CAMERA_MODEL_M5STACK_WIDE
+#define CAMERA_MODEL_AI_THINKER // Define the camera model being used #include "camera_pins.h" // Include the camera pin definitions
+
+// WiFi credentials
+const char* ssid = "Sarvesh";
+const char* password = "22320065";
+
+
+// Function prototype to start the camera server void startCameraServer();
+
+void setup() {
+// Initialize serial communication for debugging Serial.begin(115200); Serial.setDebugOutput(true);
+Serial.println();
+ 
+
+// Configure camera settings camera_config_t config;
+config.ledc_channel = LEDC_CHANNEL_0; // LEDC channel for controlling camera LED config.ledc_timer = LEDC_TIMER_0;  // LEDC timer
+// Define pin connections for the camera config.pin_d0 = Y2_GPIO_NUM; config.pin_d1 = Y3_GPIO_NUM; config.pin_d2 = Y4_GPIO_NUM; config.pin_d3 = Y5_GPIO_NUM; config.pin_d4 = Y6_GPIO_NUM; config.pin_d5 = Y7_GPIO_NUM; config.pin_d6 = Y8_GPIO_NUM; config.pin_d7 = Y9_GPIO_NUM;
+config.pin_xclk = XCLK_GPIO_NUM; // XCLK pin config.pin_pclk = PCLK_GPIO_NUM; // PCLK pin config.pin_vsync = VSYNC_GPIO_NUM; // VSYNC pin config.pin_href = HREF_GPIO_NUM; // HREF pin config.pin_sscb_sda = SIOD_GPIO_NUM; // I2C data pin config.pin_sscb_scl = SIOC_GPIO_NUM; // I2C clock pin config.pin_pwdn = PWDN_GPIO_NUM; // Power down pin config.pin_reset = RESET_GPIO_NUM; // Reset pin
+
+// Set the clock frequency and pixel format config.xclk_freq_hz = 20000000; // 20 MHz clock frequency
+config.pixel_format = PIXFORMAT_JPEG; // Use JPEG format
+
+
+// Initialize the camera with high specs to pre-allocate larger buffers if (psramFound()) {
+config.frame_size = FRAMESIZE_UXGA; // Use UXGA resolution
+ 
+config.jpeg_quality = 10; // JPEG quality config.fb_count = 2; // Use 2 frame buffers
+} else {
+config.frame_size = FRAMESIZE_SVGA; // Use SVGA resolution config.jpeg_quality = 12; // JPEG quality
+config.fb_count = 1; // Use 1 frame buffer
+}
+
+
+// If using ESP_EYE camera, configure specific GPIOs #if defined(CAMERA_MODEL_ESP_EYE) pinMode(13, INPUT_PULLUP); // Configure GPIO 13 pinMode(14, INPUT_PULLUP); // Configure GPIO 14 #endif
+
+// Initialize the camera
+esp_err_t err = esp_camera_init(&config); if (err != ESP_OK) {
+// If camera initialization fails, print the error code and exit Serial.printf("Camera init failed with error 0x%x", err); return;
+}
+
+
+// Get sensor configuration
+sensor_t * s = esp_camera_sensor_get();
+// Adjust sensor settings based on the camera model if (s->id.PID == OV3660_PID) {
+s->set_vflip(s, 1); // Flip image vertically s->set_brightness(s, 1); // Set brightness
+s->set_saturation(s, -2); // Lower saturation
+ 
+// Reduce frame size for higher initial frame rate
+s->set_framesize(s, FRAMESIZE_QVGA); // Set frame size to QVGA
+
+
+// Adjust camera settings for M5STACK_WIDE model #if defined(CAMERA_MODEL_M5STACK_WIDE) s->set_vflip(s, 1);  // Flip image vertically
+s->set_hmirror(s, 1); // Mirror image horizontally #endif
+
+// Connect to WiFi WiFi.begin(ssid, password);
+// Wait for connection to establish
+while (WiFi.status() != WL_CONNECTED) { delay(500); // Delay before retrying Serial.print("."); // Print a dot to indicate waiting
+}
+Serial.println(""); Serial.println("WiFi connected");
+
+// Start the camera server startCameraServer();
+Serial.print("Camera Ready! Use 'http://"); Serial.print(WiFi.localIP()); // Print the local IP address Serial.println("' to connect");
+}
+
+
+void loop() {
+// Main code loop, currently does nothing significant delay(10000); // Delay for 10 seconds
+ 
+// Define an array of names for 3 enrolled faces
+const char* face_names[2] = {"Sarvesh ", "Dipak"};
+
+
+static int run_face_recognition(dl_matrix3du_t *image_matrix, box_array_t *net_boxes){ dl_matrix3du_t *aligned_face = NULL;
+int matched_id = -1; // Initialize to -1 for no match
+
+
+aligned_face = dl_matrix3du_alloc(1, FACE_WIDTH, FACE_HEIGHT, 3); if(!aligned_face){
+Serial.println("Could not allocate face recognition buffer"); return matched_id;
+}
+if (align_face(net_boxes, image_matrix, aligned_face) == ESP_OK){ if (is_enrolling == 1){
+int8_t left_sample_face = enroll_face(&id_list, aligned_face);
+
+
+if(left_sample_face == (ENROLL_CONFIRM_TIMES - 1)){ Serial.printf("Enrolling Face ID: %d\n", id_list.tail);
+}
+Serial.printf("Enrolling Face ID: %d sample %d\n", id_list.tail, ENROLL_CONFIRM_TIMES
+- left_sample_face);
+rgb_printf(image_matrix, FACE_COLOR_CYAN, "ID[%u] Sample[%u]", id_list.tail, ENROLL_CONFIRM_TIMES - left_sample_face);
+if (left_sample_face == 0){ is_enrolling = 0;
+Serial.printf("Enrolled Face ID: %d\n", id_list.tail);
+}
+} else {
+matched_id = recognize_face(&id_list, aligned_face); if (matched_id >= 0 && matched_id < 2) { Serial.printf("Match Face ID: %u\n", matched_id);
+ 
+rgb_printf(image_matrix, FACE_COLOR_GREEN, "Hello %s", face_names[matched_id]);
+} else {
+Serial.println("No Match Found");
+rgb_print(image_matrix, FACE_COLOR_RED, "Intruder Alert!"); matched_id = -1;
+}
+}
+} else {
+Serial.println("Face Not Aligned");
+//rgb_print(image_matrix, FACE_COLOR_YELLOW, "Human Detected");
+}
+
+
+dl_matrix3du_free(aligned_face); return matched_id;
+}
